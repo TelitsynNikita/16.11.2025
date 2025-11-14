@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os/signal"
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"time"
 	"workmate/internal/handler"
@@ -21,8 +22,6 @@ const (
 	_readinessDrainDelay = 5 * time.Second
 )
 
-var isShutDown atomic.Bool
-
 func main() {
 	// Отлавливаем системные сигналы о запланированном завершении работы текущего процесса ОС
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -31,13 +30,26 @@ func main() {
 	// Объявляем нижний слой "repository"
 	repo := repository.NewRepository()
 
+	// Объявляем средний слой "handler"
 	services := service.NewService(repo)
 
 	// Объявляем верхний слой "handler"
 	handlers := handler.NewHandler(services)
 
 	// Объявляем экземпляр нашего сервера
-	app := handlers.InitRoutes(&isShutDown)
+	app := handlers.InitRoutes()
+
+	var once sync.Once
+
+	once.Do(func() {
+		logrus.Info("Init storage")
+		err := repo.WriteDataToFileAndLocalStorage()
+		if err != nil {
+			logrus.Fatal(err)
+		}
+	})
+
+	//ongoingCtx, stopOngoingGracefully := context.WithCancel(context.Background())
 
 	// Сервер запускаем в отдельной горутине, поскольку app.Listen не будет работать с app.ShutdownWithContext в рамках одной горутины
 	go func() {
@@ -47,11 +59,31 @@ func main() {
 		}
 	}()
 
+	go func() {
+		for {
+			select {
+			case <-time.After(time.Second * 20):
+				fmt.Println("write to file")
+				err := repo.URLStorage.WriteDataToFileAndLocalStorage()
+				if err != nil {
+					logrus.Errorf("error storing data: %v", err)
+				}
+			case <-rootCtx.Done():
+				err := repo.URLStorage.WriteDataToFileAndLocalStorage()
+				if err != nil {
+					logrus.Errorf("error storing data: %v", err)
+				}
+				return
+			}
+		}
+	}()
+
 	// Ждём ответ от канала контекста системного завершения процесса
 	<-rootCtx.Done()
+	stop()
 
 	// Прокидываем уведомление об аварийном уничтожении процесса
-	isShutDown.Store(true)
+	handler.IsShutDown.Store(true)
 	logrus.Println("Received shutdown signal, shutting down.")
 
 	// Give time for readiness check to propagate
@@ -61,6 +93,17 @@ func main() {
 	// Создаём контекст с таймером, чтобы дать запущенным горутинам(хэндлерам) время для завершения своей работы
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), _shutdownPeriod)
 	defer cancel()
+
+	go func() {
+		select {
+		case <-shutdownCtx.Done():
+			err := repo.URLStorage.WriteDataToFileAndLocalStorage()
+			if err != nil {
+				logrus.Errorf("error storing data: %v", err)
+			}
+			return
+		}
+	}()
 
 	err := app.ShutdownWithContext(shutdownCtx)
 	if err != nil {
