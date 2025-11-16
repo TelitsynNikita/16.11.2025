@@ -24,4 +24,4 @@ send-urls: ## Отправить сообщение в link/check_by_urls
 send-ids: ## Отправить сообщение в link/check_by_id
 	 curl --location 'http://localhost:8080/link/check_by_id' \
      --header 'Content-Type: application/json' \
-     --data '{"links_list": [4]}'
+     --data '{"links_list": [1]}'
