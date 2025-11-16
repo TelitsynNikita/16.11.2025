@@ -2,19 +2,20 @@ package repository
 
 import "workmate/internal/model"
 
-type URLStorage interface {
+type URLStorageRepository interface {
 	GetUrlByIDs(ids []int) ([]model.PersistentStorageData, error)
 	GetLinksByUrl(urls []string) (int, []string, error)
 	WriteDataToFileAndLocalStorage() error
 	ReadFileToLocalStorage() error
+	InitPersistentStorage() error
 }
 
 type Repository struct {
-	URLStorage
+	URLStorageRepository
 }
 
 func NewRepository() *Repository {
 	return &Repository{
-		URLStorage: NewPersistentURLStorage(),
+		URLStorageRepository: NewPersistentURLStorage(),
 	}
 }

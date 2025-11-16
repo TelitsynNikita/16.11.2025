@@ -14,9 +14,9 @@ import (
 )
 
 type PersistentURLStorage struct {
-	localStorageMutex      sync.RWMutex
+	localStorageMutex      sync.Mutex
 	localStorage           map[int]string
-	persistentStorageMutex sync.RWMutex
+	persistentStorageMutex sync.Mutex
 }
 
 func NewPersistentURLStorage() *PersistentURLStorage {
@@ -26,6 +26,8 @@ func NewPersistentURLStorage() *PersistentURLStorage {
 }
 
 func (p *PersistentURLStorage) GetLinksByUrl(urls []string) (int, []string, error) {
+	p.localStorageMutex.Lock()
+	defer p.localStorageMutex.Unlock()
 	if len(p.localStorage) == 0 {
 		err := p.ReadFileToLocalStorage()
 		if err != nil {
@@ -48,14 +50,14 @@ func (p *PersistentURLStorage) GetLinksByUrl(urls []string) (int, []string, erro
 		}
 	}
 
-	p.localStorageMutex.Lock()
 	p.localStorage[theMostIndexInMap+1] = encodeUrlStrings
-	p.localStorageMutex.Unlock()
 
 	return theMostIndexInMap + 1, urls, nil
 }
 
 func (p *PersistentURLStorage) GetUrlByIDs(ids []int) ([]model.PersistentStorageData, error) {
+	p.localStorageMutex.Lock()
+	defer p.localStorageMutex.Unlock()
 	if len(p.localStorage) == 0 {
 		err := p.ReadFileToLocalStorage()
 		if err != nil {
@@ -65,12 +67,10 @@ func (p *PersistentURLStorage) GetUrlByIDs(ids []int) ([]model.PersistentStorage
 
 	var links []model.PersistentStorageData
 	for _, id := range ids {
-		p.localStorageMutex.RLock()
 		encodeString, ok := p.localStorage[id]
 		if !ok {
 			return nil, fmt.Errorf("there is no data by id: %d", id)
 		}
-		p.localStorageMutex.RUnlock()
 
 		data, err := base64.StdEncoding.DecodeString(encodeString)
 		if err != nil {
@@ -91,33 +91,20 @@ func (p *PersistentURLStorage) GetUrlByIDs(ids []int) ([]model.PersistentStorage
 }
 
 func (p *PersistentURLStorage) ReadFileToLocalStorage() error {
-	p.persistentStorageMutex.RLock()
-	file, err := os.ReadFile("persistent_storage.txt")
-	if err != nil && errors.Is(err, os.ErrNotExist) {
-		err = p.CreatePersistentStorage()
-		if err != nil {
-			return err
-		}
-
-		file, err = os.ReadFile("persistent_storage.txt")
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
+	p.persistentStorageMutex.Lock()
+	defer p.persistentStorageMutex.Unlock()
+	file, err := p.readPersistentStorage()
+	if err != nil {
 		return err
 	}
 
 	var data map[int]string
-
 	err = json.Unmarshal(file, &data)
 	if err != nil {
 		return err
 	}
-	p.persistentStorageMutex.RUnlock()
 
-	p.localStorageMutex.Lock()
 	p.localStorage = data
-	p.localStorageMutex.Unlock()
 
 	return nil
 }
@@ -125,7 +112,11 @@ func (p *PersistentURLStorage) ReadFileToLocalStorage() error {
 func (p *PersistentURLStorage) WriteDataToFileAndLocalStorage() error {
 	p.persistentStorageMutex.Lock()
 	defer p.persistentStorageMutex.Unlock()
-	err := exec.Command("/bin/bash", "-c", "echo > ./persistent_storage.txt").Run()
+	if len(p.localStorage) == 0 {
+		return nil
+	}
+
+	err := p.removeAllDataFromPersistentStorage()
 	if err != nil {
 		return err
 	}
@@ -135,7 +126,7 @@ func (p *PersistentURLStorage) WriteDataToFileAndLocalStorage() error {
 		return err
 	}
 
-	err = os.WriteFile("persistent_storage.txt", data, 0666)
+	err = p.writeDataToPersistentStorage(data)
 	if err != nil {
 		return err
 	}
@@ -143,7 +134,35 @@ func (p *PersistentURLStorage) WriteDataToFileAndLocalStorage() error {
 	return nil
 }
 
-func (p *PersistentURLStorage) CreatePersistentStorage() error {
+func (p *PersistentURLStorage) InitPersistentStorage() error {
+	file, err := p.readPersistentStorage()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			err = p.createPersistentStorage()
+			if err != nil {
+				return err
+			}
+
+			err = p.writeDataToPersistentStorage([]byte("{}"))
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	if len(file) == 0 {
+		err = p.writeDataToPersistentStorage([]byte("{}"))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (p *PersistentURLStorage) createPersistentStorage() error {
 	file, err := os.Create("persistent_storage.txt")
 	if err != nil || file == nil {
 		return err
@@ -151,4 +170,31 @@ func (p *PersistentURLStorage) CreatePersistentStorage() error {
 	defer file.Close()
 
 	return nil
+}
+
+func (p *PersistentURLStorage) writeDataToPersistentStorage(data []byte) error {
+	err := os.WriteFile("persistent_storage.txt", data, 0666)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *PersistentURLStorage) removeAllDataFromPersistentStorage() error {
+	err := exec.Command("/bin/bash", "-c", "echo > ./persistent_storage.txt").Run()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *PersistentURLStorage) readPersistentStorage() ([]byte, error) {
+	file, err := os.ReadFile("persistent_storage.txt")
+	if err != nil {
+		return nil, err
+	}
+
+	return file, nil
 }

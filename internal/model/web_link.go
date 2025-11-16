@@ -12,8 +12,3 @@ type CheckLinksStatusByUrlResponse struct {
 type CheckLinksStatusByIDRequest struct {
 	LinksList []int `json:"links_list" validate:"required,gt=0,lte=200,dive,gt=0,lte=1000000000"`
 }
-
-type PersistentStorageData struct {
-	ID          int      `json:"id"`
-	LinkedLinks []string `json:"links"`
-}

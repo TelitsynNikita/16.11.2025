@@ -5,17 +5,17 @@ import (
 	"workmate/internal/repository"
 )
 
-type URLService interface {
-	GetUrlByID(id []int) (int, error)
+type PersistentURLService interface {
+	GetUrlByID(ids []int) ([]model.CheckLinksStatusByUrlResponse, error)
 	CheckLinksStatusByUrl(urls []string) (model.CheckLinksStatusByUrlResponse, error)
 }
 
 type Service struct {
-	URLService
+	PersistentURLService
 }
 
 func NewService(repo *repository.Repository) *Service {
 	return &Service{
-		URLService: NewURLService(repo.URLStorage),
+		PersistentURLService: NewURLService(repo.URLStorageRepository),
 	}
 }
